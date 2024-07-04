@@ -48,7 +48,7 @@ from unstructured.staging.base import (
 )
 from unstructured_inference.models.chipper import MODEL_TYPES as CHIPPER_MODEL_TYPES
 from unstructured_inference.models.base import UnknownModelException
-
+from tempfile import SpooledTemporaryFile
 
 app = FastAPI()
 router = APIRouter()
@@ -269,6 +269,13 @@ def pipeline_api(
     m_max_characters=[],
     m_extract_image_block_types=None,
 ):
+    logger.info(f"the instance of file is {type(file)}")
+    if isinstance(file, SpooledTemporaryFile) or not isinstance(file, io.BytesIO):
+        file_content = file.read()
+        file = io.BytesIO(file_content)
+        file.seek(0)  # 파일 포인터를 시작점으로 되돌립니다.
+    logger.info(f"After conversion, the instance of file is {type(file)}")
+
     if filename.endswith(".msg"):
         # Note(yuming): convert file type for msg files
         # since fast api might sent the wrong one.
