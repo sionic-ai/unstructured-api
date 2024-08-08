@@ -36,41 +36,40 @@ def get_memory_usage():
 
 
 def get_memory_limit():
-    EIGHTY: float = 0.8
+    FULL: float = 1.0
     try:
         with open('/sys/fs/cgroup/memory/memory.limit_in_bytes', 'r') as f:
-            return int(f.read().strip()) * EIGHTY
+            return int(f.read().strip()) * FULL
     except FileNotFoundError:
         try:
             with open('/sys/fs/cgroup/memory.max', 'r') as f:
                 value = f.read().strip()
-                return int(value) * EIGHTY if value != 'max' else None
+                return int(value) * FULL if value != 'max' else None
         except FileNotFoundError:
             mem = psutil.virtual_memory()
-            return mem.total * EIGHTY  # Return the total memory in bytes
+            return mem.total * FULL  # Return the total memory in bytes
 
 def _check_free_memory():
-    global is_memory_low  # 전역 변수로 선언
-    memory_free_minimum = int(os.environ.get("UNSTRUCTURED_MEMORY_FREE_MINIMUM_MB", 2048))
-    memory_free_minimum_bytes = memory_free_minimum * 1024 * 1024
+    global is_memory_low  # 전역 변수로 is_memory_low를 사용
 
     usage = get_memory_usage()
     limit = get_memory_limit()
 
+    print(f"Memory usage: {usage / 1024 / 1024:.2f} MB, Memory limit: {limit / 1024 / 1024:.2f} MB")
+
     if usage is None or limit is None:
         print("Unable to determine memory usage or limit. Assuming sufficient memory.")
-        is_memory_low = False  # 메모리 상태를 알 수 없을 때 False로 설정
+        is_memory_low = False  # 충분한 메모리가 있다고 가정
         return True
 
-    free_memory = limit - usage
+    usage_threshold = limit * 0.8
 
-    if free_memory <= memory_free_minimum_bytes:
-        print(
-            f"Free memory ({free_memory / 1024 / 1024:.2f} MB) is below {memory_free_minimum} MB")
+    if usage >= usage_threshold:
+        print(f"Memory usage ({usage / 1024 / 1024:.2f} MB) is above 80% of the limit ({usage_threshold / 1024 / 1024:.2f} MB)")
         is_memory_low = True
         return False
     else:
-        print(f"Free memory: {free_memory / 1024 / 1024:.2f} MB, Limit: {limit / 1024 / 1024:.2f} MB")
+        print(f"Memory usage: {usage / 1024 / 1024:.2f} MB, below 80% of the limit ({usage_threshold / 1024 / 1024:.2f} MB)")
         is_memory_low = False
         return True
 
@@ -81,6 +80,7 @@ def healthcheck(_: Request):
     _check_free_memory()
 
     if is_shutting_down or is_memory_low:
+        print(f"Service is shutting down: {is_shutting_down}, low memory: {is_memory_low}")
         return JSONResponse(
             status_code=503,
             content={
@@ -90,6 +90,7 @@ def healthcheck(_: Request):
             }
         )
 
+    print(f"Service is healthy, {active_requests} active requests")
     return JSONResponse(
         status_code=200,
         content={
