@@ -9,13 +9,13 @@ DOCKER_IMAGE="${DOCKER_IMAGE:-pipeline-family-${PIPELINE_FAMILY}-dev}"
 DOCKER_PLATFORM="${DOCKER_PLATFORM:-}"
 
 
-DOCKER_BUILD_CMD=(docker buildx build --load -f Dockerfile \
+DOCKER_BUILD_CMD=(docker buildx build --load --no-cache -f Dockerfile \
   --build-arg PIP_VERSION="$PIP_VERSION" \
   --build-arg BUILDKIT_INLINE_CACHE=1 \
   --build-arg PIPELINE_PACKAGE="$PIPELINE_PACKAGE" \
   --progress plain \
   --target code \
-  --cache-from "$DOCKER_REPOSITORY":latest \
+#  --cache-from "$DOCKER_REPOSITORY":latest \
   -t "$DOCKER_IMAGE" .)
 
 # only build for specific platform if DOCKER_PLATFORM is set
