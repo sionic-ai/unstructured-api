@@ -32,22 +32,22 @@ def get_memory_usage():
                 return int(f.read().strip())
         except FileNotFoundError:
             mem = psutil.virtual_memory()
-            return mem
+            return mem.used
 
 
 def get_memory_limit():
+    EIGHTY: float = 0.8
     try:
         with open('/sys/fs/cgroup/memory/memory.limit_in_bytes', 'r') as f:
-            return int(f.read().strip())
+            return int(f.read().strip()) * EIGHTY
     except FileNotFoundError:
         try:
             with open('/sys/fs/cgroup/memory.max', 'r') as f:
                 value = f.read().strip()
-                return int(value) if value != 'max' else None
+                return int(value) * EIGHTY if value != 'max' else None
         except FileNotFoundError:
             mem = psutil.virtual_memory()
-            return mem
-
+            return mem.total * EIGHTY  # Return the total memory in bytes
 
 def _check_free_memory():
     global is_memory_low  # 전역 변수로 선언
