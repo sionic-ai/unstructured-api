@@ -19,13 +19,12 @@ COPY requirements/base.txt requirements-base.txt
 RUN ${PIP} install pip==23.2.1
 RUN ${PIP} install --no-cache-dir -r requirements-base.txt
 
-#FROM python-deps as model-deps
-#RUN ${PYTHON} -c "import nltk; nltk.download('punkt')" && \
-#  ${PYTHON} -c "import nltk; nltk.download('averaged_perceptron_tagger')" && \
-#  ${PYTHON} -c "from unstructured.partition.model_init import initialize; initialize()"
+FROM python-deps as model-deps
+RUN ${PYTHON} -c "import nltk; nltk.download('punkt')" && \
+  ${PYTHON} -c "import nltk; nltk.download('averaged_perceptron_tagger')" && \
+  ${PYTHON} -c "from unstructured.partition.model_init import initialize; initialize()"
 
-FROM python-deps as code
-# model-deps
+FROM model-deps as code
 COPY CHANGELOG.md CHANGELOG.md
 COPY logger_config.yaml logger_config.yaml
 COPY prepline_general/ prepline_general/
