@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 import logging
 import os
 
+from .events import healthcheck, MemoryCheckMiddleware, graceful_shutdown
 from .general import router as general_router
 
 logger = logging.getLogger("unstructured_api")
@@ -21,18 +22,13 @@ app = FastAPI(
 uvicorn_logger = logging.getLogger("uvicorn.error")
 if os.environ.get("ENV") in ["dev", "prod"]:
     uvicorn_logger.disabled = True
-
-
-# Catch all HTTPException for uniform logging and response
 @app.exception_handler(HTTPException)
-async def http_error_handler(request: Request, e: HTTPException):
+async def http_error_handler(_: Request, e: HTTPException):
     logger.error(e.detail)
     return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
 
-
-# Catch any other errors and return as 500
 @app.exception_handler(Exception)
-async def error_handler(request: Request, e: Exception):
+async def error_handler(_: Request, e: Exception):
     return JSONResponse(status_code=500, content={"detail": str(e)})
 
 
@@ -66,9 +62,16 @@ logging.getLogger("uvicorn.access").addFilter(HealthCheckFilter())
 logging.getLogger("uvicorn.access").addFilter(MetricsCheckFilter())
 
 
-@app.get("/healthcheck", status_code=status.HTTP_200_OK, include_in_schema=False)
-def healthcheck(request: Request):
-    return {"healthcheck": "HEALTHCHECK STATUS: EVERYTHING OK!"}
+
+@app.get("/healthcheck", include_in_schema=False)
+def healthcheck_endpoint(request: Request):
+    return healthcheck(request)
+
+app.add_middleware(MemoryCheckMiddleware)
 
 
 logger.info("Started Unstructured API")
+
+@app.on_event("shutdown")
+def shutdown_event():
+    graceful_shutdown()

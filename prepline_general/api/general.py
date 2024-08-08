@@ -48,6 +48,7 @@ from unstructured.staging.base import (
 )
 from unstructured_inference.models.chipper import MODEL_TYPES as CHIPPER_MODEL_TYPES
 
+from prepline_general.api.events import shutdown_event
 
 app = FastAPI()
 router = APIRouter()
@@ -335,7 +336,7 @@ def pipeline_api(
             raise HTTPException(status_code=400, detail="File does not appear to be a valid PDF")
 
     strategy = (m_strategy[0] if len(m_strategy) else "auto").lower()
-    strategies = ["fast", "hi_res", "auto", "ocr_only"]
+    strategies = ["fast", "auto"]
     if strategy not in strategies:
         raise HTTPException(
             status_code=400, detail=f"Invalid strategy: {strategy}. Must be one of {strategies}"
@@ -658,112 +659,125 @@ def pipeline_1(
     new_after_n_chars: List[str] = Form(default=[]),
     max_characters: List[str] = Form(default=[]),
 ):
-    if files:
-        for file_index in range(len(files)):
-            if files[file_index].content_type == "application/gzip":
-                files[file_index] = ungz_file(files[file_index], gz_uncompressed_content_type)
+    from .events import active_requests, is_shutting_down, request_lock, is_memory_low
+    global active_requests, is_shutting_down
 
-    content_type = request.headers.get("Accept")
+    if is_shutting_down:
+        raise HTTPException(status_code=503, detail="Service is shutting down")
 
-    default_response_type = output_format or "application/json"
-    if not content_type or content_type == "*/*" or content_type == "multipart/mixed":
-        media_type = default_response_type
-    else:
-        media_type = content_type
+    with request_lock:
+        active_requests += 1
+    try:
+        if files:
+            for file_index in range(len(files)):
+                if files[file_index].content_type == "application/gzip":
+                    files[file_index] = ungz_file(files[file_index], gz_uncompressed_content_type)
 
-    if isinstance(files, list) and len(files):
-        if len(files) > 1:
-            if content_type and content_type not in [
-                "*/*",
-                "multipart/mixed",
-                "application/json",
-                "text/csv",
-            ]:
-                raise HTTPException(
-                    detail=(
-                        f"Conflict in media type {content_type}"
-                        ' with response type "multipart/mixed".\n'
-                    ),
-                    status_code=status.HTTP_406_NOT_ACCEPTABLE,
-                )
+        content_type = request.headers.get("Accept")
 
-        def response_generator(is_multipart):
-            for file in files:
-                file_content_type = get_validated_mimetype(file)
+        default_response_type = output_format or "application/json"
+        if not content_type or content_type == "*/*" or content_type == "multipart/mixed":
+            media_type = default_response_type
+        else:
+            media_type = content_type
 
-                _file = file.file
-
-                response = pipeline_api(
-                    _file,
-                    request=request,
-                    m_coordinates=coordinates,
-                    m_encoding=encoding,
-                    m_hi_res_model_name=hi_res_model_name,
-                    m_include_page_breaks=include_page_breaks,
-                    m_ocr_languages=ocr_languages,
-                    m_pdf_infer_table_structure=pdf_infer_table_structure,
-                    m_skip_infer_table_types=skip_infer_table_types,
-                    m_strategy=strategy,
-                    m_xml_keep_tags=xml_keep_tags,
-                    response_type=media_type,
-                    filename=file.filename,
-                    file_content_type=file_content_type,
-                    languages=languages,
-                    m_chunking_strategy=chunking_strategy,
-                    m_multipage_sections=multipage_sections,
-                    m_combine_under_n_chars=combine_under_n_chars,
-                    m_new_after_n_chars=new_after_n_chars,
-                    m_max_characters=max_characters,
-                )
-
-                if is_expected_response_type(media_type, type(response)):
+        if isinstance(files, list) and len(files):
+            if len(files) > 1:
+                if content_type and content_type not in [
+                    "*/*",
+                    "multipart/mixed",
+                    "application/json",
+                    "text/csv",
+                ]:
                     raise HTTPException(
                         detail=(
-                            f"Conflict in media type {media_type}"
-                            f" with response type {type(response)}.\n"
+                            f"Conflict in media type {content_type}"
+                            ' with response type "multipart/mixed".\n'
                         ),
                         status_code=status.HTTP_406_NOT_ACCEPTABLE,
                     )
 
-                valid_response_types = ["application/json", "text/csv", "*/*", "multipart/mixed"]
-                if media_type in valid_response_types:
-                    if is_multipart:
-                        if type(response) not in [str, bytes]:
-                            response = json.dumps(response)
-                    elif media_type == "text/csv":
-                        response = PlainTextResponse(response)
-                    yield response
-                else:
-                    raise HTTPException(
-                        detail=f"Unsupported media type {media_type}.\n",
-                        status_code=status.HTTP_406_NOT_ACCEPTABLE,
+            def response_generator(is_multipart):
+                for file in files:
+                    file_content_type = get_validated_mimetype(file)
+
+                    _file = file.file
+
+                    response = pipeline_api(
+                        _file,
+                        request=request,
+                        m_coordinates=coordinates,
+                        m_encoding=encoding,
+                        m_hi_res_model_name=hi_res_model_name,
+                        m_include_page_breaks=include_page_breaks,
+                        m_ocr_languages=ocr_languages,
+                        m_pdf_infer_table_structure=pdf_infer_table_structure,
+                        m_skip_infer_table_types=skip_infer_table_types,
+                        m_strategy=strategy,
+                        m_xml_keep_tags=xml_keep_tags,
+                        response_type=media_type,
+                        filename=file.filename,
+                        file_content_type=file_content_type,
+                        languages=languages,
+                        m_chunking_strategy=chunking_strategy,
+                        m_multipage_sections=multipage_sections,
+                        m_combine_under_n_chars=combine_under_n_chars,
+                        m_new_after_n_chars=new_after_n_chars,
+                        m_max_characters=max_characters,
                     )
 
-        def join_responses(responses):
-            if media_type != "text/csv":
-                return responses
-            data = pd.read_csv(io.BytesIO(responses[0].body))
-            if len(responses) > 1:
-                for resp in responses[1:]:
-                    resp_data = pd.read_csv(io.BytesIO(resp.body))
-                    data = data.merge(resp_data, how="outer")
-            return PlainTextResponse(data.to_csv())
+                    if is_expected_response_type(media_type, type(response)):
+                        raise HTTPException(
+                            detail=(
+                                f"Conflict in media type {media_type}"
+                                f" with response type {type(response)}.\n"
+                            ),
+                            status_code=status.HTTP_406_NOT_ACCEPTABLE,
+                        )
 
-        if content_type == "multipart/mixed":
-            return MultipartMixedResponse(
-                response_generator(is_multipart=True), content_type=media_type
-            )
+                    valid_response_types = ["application/json", "text/csv", "*/*", "multipart/mixed"]
+                    if media_type in valid_response_types:
+                        if is_multipart:
+                            if type(response) not in [str, bytes]:
+                                response = json.dumps(response)
+                        elif media_type == "text/csv":
+                            response = PlainTextResponse(response)
+                        yield response
+                    else:
+                        raise HTTPException(
+                            detail=f"Unsupported media type {media_type}.\n",
+                            status_code=status.HTTP_406_NOT_ACCEPTABLE,
+                        )
+
+            def join_responses(responses):
+                if media_type != "text/csv":
+                    return responses
+                data = pd.read_csv(io.BytesIO(responses[0].body))
+                if len(responses) > 1:
+                    for resp in responses[1:]:
+                        resp_data = pd.read_csv(io.BytesIO(resp.body))
+                        data = data.merge(resp_data, how="outer")
+                return PlainTextResponse(data.to_csv())
+
+            if content_type == "multipart/mixed":
+                return MultipartMixedResponse(
+                    response_generator(is_multipart=True), content_type=media_type
+                )
+            else:
+                return (
+                    list(response_generator(is_multipart=False))[0]
+                    if len(files) == 1
+                    else join_responses(list(response_generator(is_multipart=False)))
+                )
         else:
-            return (
-                list(response_generator(is_multipart=False))[0]
-                if len(files) == 1
-                else join_responses(list(response_generator(is_multipart=False)))
+            raise HTTPException(
+                detail='Request parameter "files" is required.\n',
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
-    else:
-        raise HTTPException(
-            detail='Request parameter "files" is required.\n',
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
-
+    finally:
+        with request_lock:
+            active_requests -= 1
+            if active_requests == 0 and is_shutting_down:
+                shutdown_event.set()
 
 app.include_router(router)
