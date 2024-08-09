@@ -21,9 +21,9 @@ RUN python3.10 -m pip install pip==${PIP_VERSION} \
 
 FROM python-deps as model-deps
 COPY scripts/hi_res_model_initialize.py hi_res_model_initialize.py
-RUN python3.10 -c "import nltk; nltk.download('punkt')" && \
-  python3.10 -c "import nltk; nltk.download('averaged_perceptron_tagger')" && \
-  python3.10 -c "from hi_res_model_initialize import initialize; initialize()"
+RUN python3.10 -m pip install nltk && \
+  python3.10 -c "import nltk; nltk.download('punkt')" && \
+  python3.10 -c "import nltk; nltk.download('averaged_perceptron_tagger')"
 
 FROM model-deps as code
 COPY CHANGELOG.md CHANGELOG.md
